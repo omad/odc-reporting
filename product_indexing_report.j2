@@ -1,0 +1,58 @@
+---
+title: Indexed Products Report (Sandbox DB)
+author: Damien Ayers
+date: 2021-06-27
+right-header: \today
+
+#documentclass: report
+header-includes:
+- \usepackage{sectsty}
+- \sectionfont{\clearpage}
+---
+
+
+# Indexed Products Report (Sandbox DB)
+
+
+{% for product, details in all_products.items() if details.num_not_indexed > 0 %}
+
+
+## {{ product }}
+
+detail | value
+-:|:--------
+Un-indexed Datasets |  {{ details.num_not_indexed }}
+Prefix |  `{{details.prefix_used}}`
+Suffix |  `{{details.suffix_used}}`
+In S3 |  {{ details.num_on_s3 }}
+In Database |  {{ details.num_in_db }}
+
+
+
+Un-indexed Datasets 
+: {{ details.num_not_indexed }}
+
+Prefix
+: `{{details.prefix_used}}`
+
+Suffix
+: `{{details.suffix_used}}`
+
+In S3
+: {{ details.num_on_s3 }}
+
+In Database
+: {{ details.num_in_db }}
+
+{% if details.num_not_indexed != 0 %}
+Table: Un-indexed datasets by year
+
+Year | Count
+-----|------
+{% for year, count in details.not_indexed_by_year | dictsort -%}
+{{year}} | {{count}}
+{% endfor %}
+
+{% endif %}
+
+{% endfor %}
