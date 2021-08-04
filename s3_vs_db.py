@@ -14,7 +14,11 @@ from itertools import groupby
 from odc.aws import inventory
 from odc.aws import s3_fetch, s3_client, s3_download
 from psycopg2.extras import NamedTupleCursor
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterator, *args, **kwargs):
+        return iterator
 
 
 def load_inventory_manifest(url):
