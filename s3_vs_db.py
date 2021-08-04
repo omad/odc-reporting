@@ -1,21 +1,20 @@
+import csv
 import gzip
+import json
 import os.path
+import re
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
 
 import click
-import csv
 import dawg
-import json
 import psycopg2
-import re
 from itertools import groupby
-from pathlib import Path
-from psycopg2.extras import NamedTupleCursor
-from tqdm import tqdm
-
 from odc.aws import inventory
 from odc.aws import s3_fetch, s3_client, s3_download
+from psycopg2.extras import NamedTupleCursor
+from tqdm import tqdm
 
 
 def load_inventory_manifest(url):
@@ -47,7 +46,7 @@ def _load_inventory_file_list(filename, predicate):
     with gzip.open(filename, mode='rt', encoding='utf8') as fin:
         reader = csv.reader(fin)
         s3_urls = (f"s3://{bucket}/{key}" for bucket, key, _, _ in reader)
-        return [url for url in s3_urls in if predicate(url)]
+        return [url for url in s3_urls if predicate(url)]
 
 
 def stream_inventory_parallel(predicate=None, max_workers=None):
