@@ -5,6 +5,7 @@ import os.path
 import re
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import date
 from pathlib import Path
 
 import click
@@ -236,22 +237,32 @@ def _yaml_or_json(line):
                                               'See '
                                               'https://www.postgresql.org/docs/9.6/libpq-connect.html#LIBPQ-CONNSTRING'
                                               ' for details. May also be ommitted and connection details will come from'
-                                              ' environment variables and .pgpass file.')
-@click.option('--output-dir')
+                                              ' environment variables and .pgpass file.',
+              default='')
 def main(manifest_url, postgresql_connection):
     manifest = load_inventory_manifest(manifest_url)
-    urls = get_inventory_urls(manifest)
-    for url in tqdm(urls, desc='Downloading S3 Inventory'):
-        s3_download(url)
+    manifest_date = date.fromtimestamp(float(manifest['creationTimestamp'])/1000).strftime('%Y-%m-%d')
+    source_bucket = manifest['sourceBucket']
+    inventory_path = f'{source_bucket}_{manifest_date}'
 
-    d = dawg.CompletionDAWG(stream_inventory_parallel(predicate=_yaml_or_json, max_workers=2))
-    s3_datasets_dawg = 'datasets_on_s3.dawg'
-    d.save(s3_datasets_dawg)
+    # TODO get date of inventory, use for directory
+    if not Path(inventory_path).exists():
+        Path(inventory_path).mkdir()
+        with os.chdir(inventory_path):
+
+            urls = get_inventory_urls(manifest)
+            for url in tqdm(urls, desc='Downloading S3 Inventory'):
+                s3_download(url)
+
+    inventory_dawg = manifest_date + '_bucket_inventory.dawg'
+    if not Path(inventory_dawg).exists():
+        d = dawg.CompletionDAWG(stream_inventory_parallel(predicate=_yaml_or_json, max_workers=2))
+        d.save(inventory_dawg)
 
     psql_conn = psycopg2.connect(postgresql_connection)
     prod_locations = find_product_locations(psql_conn)
 
-    all_product_report = compare_all_products(prod_locations, psql_conn, s3_datasets_dawg)
+    all_product_report = compare_all_products(prod_locations, psql_conn, inventory_dawg)
 
     Path('all_products_report.json').write_text(json.dumps(all_product_report))
 
