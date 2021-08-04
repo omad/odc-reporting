@@ -1,71 +1,23 @@
-import csv
-import gzip
 import json
 import os.path
 import re
 from collections import Counter, defaultdict
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import date
+from datetime import datetime
+from itertools import groupby
 from pathlib import Path
 
 import click
 import dawg
 import psycopg2
-from itertools import groupby
 from odc.aws import inventory
-from odc.aws import s3_fetch, s3_client, s3_download
+from odc.aws import s3_client
 from psycopg2.extras import NamedTupleCursor
+
 try:
     from tqdm import tqdm
 except ImportError:
     def tqdm(iterator, *args, **kwargs):
         return iterator
-
-
-def load_inventory_manifest(url):
-    s3 = s3_client()
-
-    if url.endswith("/"):
-        url = inventory.find_latest_manifest(url, s3)
-
-    info = s3_fetch(url, s3=s3)
-    return json.loads(info)
-
-
-def get_inventory_urls(manifest):
-    """Get all the URLs for the latest complete CSV inventory"""
-    must_have_keys = {"fileFormat", "fileSchema", "files", "destinationBucket"}
-    missing_keys = must_have_keys - set(manifest)
-    if missing_keys:
-        raise ValueError("Manifest file haven't parsed correctly")
-
-    if manifest["fileFormat"].upper() != "CSV":
-        raise ValueError("Data is not in CSV format")
-
-    s3_prefix = "s3://" + manifest["destinationBucket"].split(":")[-1] + "/"
-    data_urls = [s3_prefix + f["key"] for f in manifest["files"]]
-    return data_urls
-
-
-def _load_inventory_file_list(filename, predicate):
-    with gzip.open(filename, mode='rt', encoding='utf8') as fin:
-        reader = csv.reader(fin)
-        s3_urls = (f"s3://{bucket}/{key}" for bucket, key, _, _ in reader)
-        return [url for url in s3_urls if predicate(url)]
-
-
-def stream_inventory_parallel(predicate=None, max_workers=None):
-    if predicate is None:
-        predicate = lambda x: True
-
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        print(f'Using {executor._max_workers} workers.')
-        futures = []
-        for csvfile in Path(".").glob('*.csv.gz'):
-            futures.append(executor.submit(_load_inventory_file_list, csvfile, predicate))
-
-        for future in tqdm(as_completed(futures), desc='Inventory file', unit='files', total=len(futures)):
-            yield from future.result()
 
 
 def locations_from_inventory(prefix, suffix, inventory_dawg_file):
@@ -208,7 +160,9 @@ def compare_all_products(prod_locations, conn, inventory_dawg_file):
 
         num_not_indexed = len(not_in_db.keys())
 
-        missing_urls = [url for url in not_in_db.keys()]
+        if num_not_indexed > 0:
+            print(f"Recording un-indexed URLs into {product_name}.txt")
+            Path(f'{product_name}.txt').write_text('\n'.join(not_in_db.keys()) + '\n')
 
         # Compare and output
         product_report = {
@@ -218,7 +172,7 @@ def compare_all_products(prod_locations, conn, inventory_dawg_file):
             'num_on_s3': len(s3_locations.keys()),
             'num_not_indexed': num_not_indexed,
             'not_indexed_by_year': count_by_year(not_in_db.keys()),
-            'missing_urls': missing_urls
+            'on_s3_by_year': count_by_year(s3_locations.keys())
         }
         print(product_report)
         all_product_report[product_name] = product_report
@@ -226,8 +180,10 @@ def compare_all_products(prod_locations, conn, inventory_dawg_file):
     return all_product_report
 
 
-def _yaml_or_json(line):
-    return line.endswith('yaml') or line.endswith('json')
+def _dataset_files(inventory_stream):
+    for record in inventory_stream:
+        if (record.Key.endswith('yaml') or record.Key.endswith('json')) and not record.Key.endswith('.proc-info.yaml'):
+            yield f's3://{record.Bucket}/{record.Key}'
 
 
 @click.command()
@@ -239,32 +195,48 @@ def _yaml_or_json(line):
                                               ' for details. May also be ommitted and connection details will come from'
                                               ' environment variables and .pgpass file.',
               default='')
-def main(manifest_url, postgresql_connection):
-    manifest = load_inventory_manifest(manifest_url)
-    manifest_date = date.fromtimestamp(float(manifest['creationTimestamp'])/1000).strftime('%Y-%m-%d')
-    source_bucket = manifest['sourceBucket']
-    inventory_path = f'{source_bucket}_{manifest_date}'
-
-    # TODO get date of inventory, use for directory
-    if not Path(inventory_path).exists():
-        Path(inventory_path).mkdir()
-        with os.chdir(inventory_path):
-
-            urls = get_inventory_urls(manifest)
-            for url in tqdm(urls, desc='Downloading S3 Inventory'):
-                s3_download(url)
-
+@click.option('--output-dir', default='.')
+def main(output_dir, manifest_url, postgresql_connection):
+    s3 = s3_client()
+    manifest_url = inventory.find_latest_manifest(manifest_url, s3)
+    print(f"Loading inventory from {manifest_url}")
+    manifest_date = manifest_url.split('/')[-2]
     inventory_dawg = manifest_date + '_bucket_inventory.dawg'
     if not Path(inventory_dawg).exists():
-        d = dawg.CompletionDAWG(stream_inventory_parallel(predicate=_yaml_or_json, max_workers=2))
+        print(f"Streaming inventory into {inventory_dawg}")
+        d = dawg.CompletionDAWG(_dataset_files(inventory.list_inventory(manifest_url, n_threads=4)))
         d.save(inventory_dawg)
+    else:
+        print(f"Found existing inventory dump in {inventory_dawg}")
+
+    # Save as an absolute path before we change directories
+    inventory_dawg = str(Path(inventory_dawg).absolute())
 
     psql_conn = psycopg2.connect(postgresql_connection)
     prod_locations = find_product_locations(psql_conn)
 
+    print(f"Connected to Database {psql_conn.info.user}@{psql_conn.info.host}/{psql_conn.info.dbname}")
+    print(f"Saving outputs into {output_dir}")
+    Path(output_dir).mkdir(exist_ok=True)
+    os.chdir(output_dir)
     all_product_report = compare_all_products(prod_locations, psql_conn, inventory_dawg)
 
-    Path('all_products_report.json').write_text(json.dumps(all_product_report))
+    report = {
+        'metadata': {
+            'inventory_date': manifest_date,
+            'inventory_manifest': manifest_url,
+            'execution_date': datetime.now().isoformat(),
+            'database': {
+                'dbname': psql_conn.info.dbname,
+                'user': psql_conn.info.user,
+                'host': psql_conn.info.host
+            }
+        },
+        'all_products': all_product_report
+    }
+
+    print(f'Saving report information into {manifest_date}_report.json')
+    Path(f'{manifest_date}_report.json').write_text(json.dumps(report))
 
 
 if __name__ == '__main__':

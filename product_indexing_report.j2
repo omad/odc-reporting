@@ -11,10 +11,19 @@ header-includes:
 ---
 
 
-# Indexed Products Report (Sandbox DB)
+# Summary
 
 
-{% for product, details in all_products.items() if details.num_not_indexed > 0 %}
+Product | Num on S3 | Num in DB | Num not indexed
+-|-|-|-
+{% for product, details in all_products | dictsort -%}
+{% if details.num_not_indexed > 0 %}[{{ product }}]{%else%}{{product}}{%endif%} | {{details.num_on_s3}} | {{details.num_in_db}} | {{details.num_not_indexed}}
+{% endfor %}
+
+
+# Products
+
+{% for product, details in all_products | dictsort if details.num_not_indexed > 0 %}
 
 
 ## {{ product }}
@@ -27,24 +36,14 @@ Suffix |  `{{details.suffix_used}}`
 In S3 |  {{ details.num_on_s3 }}
 In Database |  {{ details.num_in_db }}
 
+[View in DEA Public Data]({{details.prefix_used | replace("s3://dea-public-data/", "https://data.dea.ga.gov.au/?prefix=")}}) 
+
+[View in Explorer](https://explorer.sandbox.dea.ga.gov.au/products/{{product}})
+
+[Missing URLs List]({{product}}.txt)
 
 
-Un-indexed Datasets 
-: {{ details.num_not_indexed }}
 
-Prefix
-: `{{details.prefix_used}}`
-
-Suffix
-: `{{details.suffix_used}}`
-
-In S3
-: {{ details.num_on_s3 }}
-
-In Database
-: {{ details.num_in_db }}
-
-{% if details.num_not_indexed != 0 %}
 Table: Un-indexed datasets by year
 
 Year | Count
@@ -53,6 +52,6 @@ Year | Count
 {{year}} | {{count}}
 {% endfor %}
 
-{% endif %}
+
 
 {% endfor %}

@@ -10,11 +10,14 @@ product_indexing_report.pdf: product_indexing_report.md
 #		-V mainfont="Bitstream Charter" \
 #	pandoc -c pandoc.css --pdf-engine wkhtmltopdf --from markdown+pipe_tables+table_captions --toc -o $@ $<
 
+new.md: product_indexing_report.j2 2021-08-03T01-00Z_all_products_report.json
+	j2 -f json $^ > $@
+
 eisvogel.pdf: product_indexing_report.md eisvogel.tex
 	pandoc $< -o $@ --from markdown --toc --template eisvogel.tex
 
 product_indexing_report.html: product_indexing_report.md
-	pandoc -s -c pandoc.css --from markdown+pipe_tables+table_captions --toc -o $@ $<
+	pandoc -s --from markdown+pipe_tables+table_captions --toc -o $@ $<
 
 product_indexing_report.md: product_indexing_report.j2 all_products_report.json
 	j2 -f json $^ > $@
