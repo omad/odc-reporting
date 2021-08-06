@@ -200,7 +200,7 @@ def main(output_dir, manifest_url, postgresql_connection):
     s3 = s3_client()
     manifest_url = inventory.find_latest_manifest(manifest_url, s3)
     print(f"Loading inventory from {manifest_url}")
-    manifest_date = manifest_url.split('/')[-2]
+    manifest_date = manifest_url.split('/')[-2].split('T')[0]
     inventory_dawg = manifest_date + '_bucket_inventory.dawg'
     if not Path(inventory_dawg).exists():
         print(f"Streaming inventory into {inventory_dawg}")
@@ -216,8 +216,9 @@ def main(output_dir, manifest_url, postgresql_connection):
     prod_locations = find_product_locations(psql_conn)
 
     print(f"Connected to Database {psql_conn.info.user}@{psql_conn.info.host}/{psql_conn.info.dbname}")
+    output_dir = Path(output_dir) / psql_conn.info.dbname / manifest_date
     print(f"Saving outputs into {output_dir}")
-    Path(output_dir).mkdir(exist_ok=True)
+    Path(output_dir).mkdir(exist_ok=True, parents=True)
     os.chdir(output_dir)
     all_product_report = compare_all_products(prod_locations, psql_conn, inventory_dawg)
 
@@ -236,7 +237,7 @@ def main(output_dir, manifest_url, postgresql_connection):
     }
 
     print(f'Saving report information into {manifest_date}_report.json')
-    Path(f'{manifest_date}_report.json').write_text(json.dumps(report))
+    Path(f'report.json').write_text(json.dumps(report))
 
 
 if __name__ == '__main__':

@@ -1,17 +1,16 @@
 ---
-title: Indexed Products Report (Sandbox DB)
-author: Damien Ayers
-date: 2021-06-27
+title: Un-Indexed Products Report ({{metadata.database.dbname}} DB)
+date: {{metadata.execution_date}}
 right-header: \today
 
-#documentclass: report
-header-includes:
-- \usepackage{sectsty}
-- \sectionfont{\clearpage}
+documentclass: report
 ---
 
 
 # Summary
+
+This report was generated at {{metadata.execution_date}} and based on the S3 Inventory at {{metadata.inventory_date}}.
+
 
 
 Product | Num on S3 | Num in DB | Num not indexed
